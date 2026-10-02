@@ -7,23 +7,34 @@
 #include <stdio.h>
 #include <stddef.h>
 
-
-
 Tensor* MSE(Tensor* y_pred, Tensor* y_true) {
-    if(y_pred->size != y_true->size) {
-        printf("inside 'MSE', size mismatch between y_pred %d and y_true %d", y_pred->size, y_true->size);
+    if (!y_pred || !y_true) return NULL;
+    if (y_pred->size != y_true->size) {
+        fprintf(stderr,
+                "MSE: size mismatch between y_pred (%d) and y_true (%d)\n",
+                y_pred->size, y_true->size);
+        return NULL;
     }
+
     Tensor* diff = tensor_sub_autograd(y_pred, y_true);
-    // printf("tesnsor_mul --> ");
-    // Tensor* sqr = tensor_mul_autograd(diff, diff);
+    if (!diff) return NULL;
+
     Tensor* sqr = tensor_square_autograd(diff);
-    // printf("tesnsor_sum --> ");
+    if (!sqr) return NULL;
+
     Tensor* sum = tensor_sum_autograd(sqr);
-    float N_val = (float)y_pred->size;
-    int N_shape[1] = {1};
-    Tensor* N = create_tensor_autograd(&N_val, N_shape, 1, 0, y_pred->device);
-    // printf("tesnsor_div --> ");
-    Tensor* mean = tensor_div_autograd(sum, N);
-    return mean;
-    // return sum;
+    if (!sum) return NULL;
+
+    /*
+     * Multiplying by 1/N keeps the autograd path alive when the scalar is a
+     * constant. The previous division path depended on binary-op gradient
+     * propagation semantics that required both operands to require gradients.
+     */
+    float inv_n_val = 1.0f / (float)y_pred->size;
+    int scalar_shape[1] = {1};
+    Tensor* inv_n = create_tensor_autograd(
+        &inv_n_val, scalar_shape, 1, 0, y_pred->device);
+    if (!inv_n) return NULL;
+
+    return tensor_mul_autograd(sum, inv_n);
 }

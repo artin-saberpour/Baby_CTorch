@@ -10,88 +10,78 @@
 #include <stdbool.h>
 #include <math.h>
 
-// call once somewhere in main: srand(time(NULL));
-
 static float frand_uniform(float low, float high) {
     return low + (high - low) * ((float)rand() / (float)RAND_MAX);
 }
 
 Linear* linear_create(Model* model, int in_features, int out_features, Device dev) {
-    Linear* l = malloc(sizeof(Linear));
+    Linear* l = (Linear*)malloc(sizeof(Linear));
+    if (!l) return NULL;
 
     int w_shape[2] = { in_features, out_features };
     int b_shape[1] = { out_features };
 
-    /* --------- weights W --------- */
     int size_w = compute_size(w_shape, 2);
-    float* w = malloc(size_w * sizeof(float));
+    float* w = (float*)malloc(size_w * sizeof(float));
+    if (!w) {
+        free(l);
+        return NULL;
+    }
 
-    // Xavier/Glorot uniform init
-    float limit = sqrtf(6.0f / (in_features + out_features));
-    printf("\n&&&&&&&&&&&&&&&&&&&&&&&here is the limit %f \n", limit);
-
+    /* Xavier/Glorot uniform initialization is symmetric around zero. */
+    float limit = sqrtf(6.0f / (float)(in_features + out_features));
     for (int i = 0; i < size_w; i++) {
-        // w[i] = frand_uniform(-limit, limit);
-        w[i] = frand_uniform(0, limit);
+        w[i] = frand_uniform(-limit, limit);
     }
 
     l->W = create_tensor(w, w_shape, 2, 1, dev);
     free(w);
-
-    /* --------- biases b --------- */
-    int size_b = compute_size(b_shape, 1);
-    float* b = malloc(size_b * sizeof(float));
-
-    for (int i = 0; i < size_b; i++) {
-        b[i] = frand_uniform(0, limit);// 0.0f;
+    if (!l->W) {
+        free(l);
+        return NULL;
     }
 
+    int size_b = compute_size(b_shape, 1);
+    float* b = (float*)calloc((size_t)size_b, sizeof(float));
+    if (!b) {
+        free_tensor(l->W);
+        free(l);
+        return NULL;
+    }
+
+    /* Zero bias is the standard neutral initialization. */
     l->b = create_tensor(b, b_shape, 1, 1, dev);
     free(b);
+    if (!l->b) {
+        free_tensor(l->W);
+        free(l);
+        return NULL;
+    }
 
-    // assign layer id
     if (model) {
         l->id = model->next_layer_id++;
     } else {
         l->id = -1;
     }
 
-    // mark tensors with layer_id and role
-    l->W->layer_id  = l->id;
-    l->W->param_role = 1; // weight
-    l->b->layer_id  = l->id;
-    l->b->param_role = 2; // bias
-
-    
+    l->W->layer_id = l->id;
+    l->W->param_role = 1;
+    l->b->layer_id = l->id;
+    l->b->param_role = 2;
 
     if (model) {
         model_register_param(model, l->W);
         model_register_param(model, l->b);
     }
 
-    // initialize W, b with small random values later (see below)
     return l;
 }
 
-
 Tensor* linear_forward(Linear* l, Tensor* x) {
-    // printf("linear_forward_called\n");
-    // x: [batch, in_features]
-    // printf("here is the first linear weights: \n");
-    // print_tensor_info(l->W);
-    Tensor* y = tensor_matmul_autograd(x, l->W);   // [batch, out_features]
-    // printf("here is the matmul in first linear output: \n");
-    // print_tensor_info(y);
-    y = tensor_add_autograd(y, l->b);              // broadcast bias
-
-    printf("linear layer id: %d, add output size is: %d\n", l->id, y->size);
-    // if(l->id==1 && y->size !=300) {
-    //     printf("###############################\n###############################\n%d###############################\n\n\n", y->size);
-    //     return NULL;
-    // }
-    return y;
+    Tensor* y = tensor_matmul_autograd(x, l->W);
+    if (!y) return NULL;
+    return tensor_add_autograd(y, l->b);
 }
-
 
 void linear_free(Linear* l) {
     if (!l) return;

@@ -6,3 +6,5 @@
 *.pdb
 *.sh
 *.png
+applications/**/build/
+applications/**/results/
