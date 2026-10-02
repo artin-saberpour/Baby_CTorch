@@ -14,6 +14,14 @@ static float frand_uniform(float low, float high) {
     return low + (high - low) * ((float)rand() / (float)RAND_MAX);
 }
 
+static void mark_parameter_leaf(Tensor* t) {
+    if (!t) return;
+    t->parents = NULL;
+    t->n_parents = 0;
+    t->backward = NULL;
+    t->backward_visited = 0;
+}
+
 Linear* linear_create(Model* model, int in_features, int out_features, Device dev) {
     Linear* l = (Linear*)malloc(sizeof(Linear));
     if (!l) return NULL;
@@ -40,6 +48,7 @@ Linear* linear_create(Model* model, int in_features, int out_features, Device de
         free(l);
         return NULL;
     }
+    mark_parameter_leaf(l->W);
 
     int size_b = compute_size(b_shape, 1);
     float* b = (float*)calloc((size_t)size_b, sizeof(float));
@@ -57,6 +66,7 @@ Linear* linear_create(Model* model, int in_features, int out_features, Device de
         free(l);
         return NULL;
     }
+    mark_parameter_leaf(l->b);
 
     if (model) {
         l->id = model->next_layer_id++;

@@ -6,7 +6,7 @@
  * Objective: predict Gaussian noise in a DDPM forward process.
  *
  * This intentionally uses only babyCTorch primitives already present in the
- * project: Linear, tanh, MSE, autograd and SGD.  It is a small but genuine
+ * project: Linear, tanh, MSE, autograd and SGD. It is a small but genuine
  * generative training workload rather than an operator unit test.
  */
 
@@ -81,9 +81,9 @@ static int set_add(TensorSet* set, Tensor* t) {
 }
 
 /*
- * The current library free_tensor() only releases metadata.  For this CPU
+ * The current library free_tensor() only releases metadata. For this CPU
  * stress test we reclaim complete transient graph tensors locally so thousands
- * of training iterations do not accumulate tensor storage.  Parameters are
+ * of training iterations do not accumulate tensor storage. Parameters are
  * never freed here and are recognized by param_role != 0.
  */
 static void destroy_transient_cpu_tensor(Tensor* t) {
@@ -93,7 +93,8 @@ static void destroy_transient_cpu_tensor(Tensor* t) {
         return;
     }
     free(t->data);
-    free(t->grad);
+    /* create_empty_tensor currently allocates grad only when requires_grad=1. */
+    if (t->requires_grad) free(t->grad);
     free(t->parents);
     free(t->shape);
     free(t->strides);
