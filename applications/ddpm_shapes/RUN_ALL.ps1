@@ -4,6 +4,85 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+function Import-VisualStudioBuildEnvironment {
+    if (Get-Command cl.exe -ErrorAction SilentlyContinue) {
+        return
+    }
+
+    $vsDevCmd = $null
+    $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+
+    if (Test-Path $vswhere) {
+        $installationPath = (& $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath 2>$null | Select-Object -First 1)
+        if ($installationPath) {
+            $candidate = Join-Path $installationPath "Common7\Tools\VsDevCmd.bat"
+            if (Test-Path $candidate) {
+                $vsDevCmd = $candidate
+            }
+        }
+    }
+
+    if (-not $vsDevCmd) {
+        $roots = @(
+            (Join-Path $env:ProgramFiles "Microsoft Visual Studio\2022"),
+            (Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\2022")
+        )
+        foreach ($root in $roots) {
+            if (-not (Test-Path $root)) { continue }
+            $candidate = Get-ChildItem -Path $root -Directory -ErrorAction SilentlyContinue |
+                ForEach-Object { Join-Path $_.FullName "Common7\Tools\VsDevCmd.bat" } |
+                Where-Object { Test-Path $_ } |
+                Select-Object -First 1
+            if ($candidate) {
+                $vsDevCmd = $candidate
+                break
+            }
+        }
+    }
+
+    if (-not $vsDevCmd) {
+        throw @"
+Visual Studio C++ build tools were not found.
+Install Visual Studio 2022 or Build Tools 2022 with the workload 'Desktop development with C++', then rerun this script.
+"@
+    }
+
+    Write-Host "Detected Visual Studio build environment: $vsDevCmd"
+
+    # Import the environment produced by VsDevCmd.bat into this PowerShell process.
+    # A temporary cmd file avoids fragile quoting around 'Program Files' paths.
+    $tempCmd = Join-Path $env:TEMP ("babyctorch_vsenv_{0}.cmd" -f $PID)
+    try {
+        @"
+@echo off
+call "$vsDevCmd" -no_logo -arch=x64 -host_arch=x64 >nul
+if errorlevel 1 exit /b %errorlevel%
+set
+"@ | Set-Content -LiteralPath $tempCmd -Encoding ASCII
+
+        $envLines = & $env:ComSpec /d /c $tempCmd
+        if ($LASTEXITCODE -ne 0) {
+            throw "VsDevCmd.bat failed with exit code $LASTEXITCODE"
+        }
+
+        foreach ($line in $envLines) {
+            if ($line -match '^([^=]+)=(.*)$') {
+                [Environment]::SetEnvironmentVariable($matches[1], $matches[2], 'Process')
+            }
+        }
+    }
+    finally {
+        Remove-Item -LiteralPath $tempCmd -Force -ErrorAction SilentlyContinue
+    }
+
+    if (-not (Get-Command cl.exe -ErrorAction SilentlyContinue)) {
+        throw "Visual Studio was detected, but cl.exe is still unavailable after importing VsDevCmd.bat. Make sure the MSVC C++ x64/x86 build tools component is installed."
+    }
+
+    $clPath = (Get-Command cl.exe).Source
+    Write-Host "Using MSVC compiler: $clPath"
+}
+
 $appDir = $PSScriptRoot
 $repoRoot = (Resolve-Path (Join-Path $appDir "..\..")).Path
 $resultsDir = Join-Path $appDir "results"
@@ -16,11 +95,12 @@ New-Item -ItemType Directory -Force -Path $buildDir | Out-Null
 Get-ChildItem $resultsDir -File -ErrorAction SilentlyContinue | Remove-Item -Force
 
 if (-not (Get-Command nvcc -ErrorAction SilentlyContinue)) {
-    throw "nvcc was not found. Run this from a shell with the CUDA toolkit on PATH."
+    throw "nvcc was not found. Make sure the CUDA toolkit is installed and its bin directory is on PATH."
 }
-if (-not (Get-Command cl.exe -ErrorAction SilentlyContinue)) {
-    Write-Warning "cl.exe is not on PATH. On Windows, launch an x64 Native Tools Command Prompt for Visual Studio 2022, then run PowerShell from there."
-}
+
+Import-VisualStudioBuildEnvironment
+
+Write-Host "Using CUDA compiler: $((Get-Command nvcc).Source)"
 
 $python = $null
 if (Get-Command python -ErrorAction SilentlyContinue) {
